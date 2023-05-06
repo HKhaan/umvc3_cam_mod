@@ -22,7 +22,7 @@ NoClip* noclip = new NoClip();
 EndScene oEndScene = NULL;
 static HWND window = NULL;
 WNDPROC oWndProc;
-
+static int64 timer = GetTickCount64();
 
 bool CheckGame()
 {
@@ -81,19 +81,24 @@ LRESULT __stdcall WndProc(const HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
     return CallWindowProc(oWndProc, hWnd, uMsg, wParam, lParam);
 }
 
+bool showWindow = false;
 
 long __stdcall hkEndScene(LPDIRECT3DDEVICE9 pDevice)
 {
-    if (GetAsyncKeyState(VK_F2))
+    if (GetTickCount64() - timer > 150)
     {
-        menuEnabled = true;
-        bindings->Init();
+        if (GetAsyncKeyState(VK_F2))
+        {
+            menuEnabled = true;
+            showWindow = !showWindow;
+            timer = GetTickCount64();
+        }
     }
-
     if (menuEnabled)
     {
         if (!init)
         {
+            bindings->Init();
             isFocused = false;
             D3DDEVICE_CREATION_PARAMETERS params;
             pDevice->GetCreationParameters(&params);
@@ -107,9 +112,13 @@ long __stdcall hkEndScene(LPDIRECT3DDEVICE9 pDevice)
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
         static bool show_demo_window = true;
-        ImGui::Begin("Noclip mod", &menuEnabled, ImGuiWindowFlags_NoSavedSettings);
-        noclip->TickMenu();
-        ImGui::End();
+        if (showWindow)
+        {
+            ImGui::SetNextWindowSize(ImVec2(400, 300)); // Set the window size to 400x300
+            ImGui::Begin("Noclip mod", &menuEnabled, ImGuiWindowFlags_NoSavedSettings);
+            noclip->TickMenu();
+            ImGui::End();
+        }
         ImGui::EndFrame();
         ImGui::Render();
         ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());

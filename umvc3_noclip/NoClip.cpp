@@ -21,20 +21,7 @@ struct DollyKeyframe
     float fov;
 };
 
-float lerp(float startVal, float endVal, float lerpVal)
-{
-    float lerpResult = (1 - std::abs(lerpVal - 1)) * startVal + std::abs(lerpVal - 1) * endVal;
-    return lerpResult;
-}
-
 std::vector<DollyKeyframe> KeyFrames;
-
-bool compareByTime(const DollyKeyframe& a, const DollyKeyframe& b)
-{
-    return a.time < b.time;
-}
-
-
 bool cameraStarted = false;
 float p1Pos = 125.0f;
 float p2Pos = -125.0f;
@@ -43,6 +30,21 @@ int restartTimer = 0;
 float rotation = 180.0f;
 float rotationUp = 0.0f;
 Vector3 pos;
+float startime = 0;
+int currenttime = 0.0f;
+float playtime = 0.0f;
+bool playing = false;
+
+float lerp(float startVal, float endVal, float lerpVal)
+{
+    float lerpResult = (1 - std::abs(lerpVal - 1)) * startVal + std::abs(lerpVal - 1) * endVal;
+    return lerpResult;
+}
+
+bool compareByTime(const DollyKeyframe& a, const DollyKeyframe& b)
+{
+    return a.time < b.time;
+}
 
 void MoveForward(float speed)
 {
@@ -69,14 +71,82 @@ bool KeyPressed(int key)
     return (GetAsyncKeyState(key) & 0x8000) != 0;
 }
 
+
+void PlayingInformation(DollyKeyframe& start, DollyKeyframe& end, float& lerpval, int& keyframe)
+{
+    auto tm = std::chrono::high_resolution_clock::now();
+    auto now = std::chrono::duration_cast<std::chrono::duration<double>>(tm.time_since_epoch()).count();
+    auto playtime = now - startime;
+    start = KeyFrames[0];
+    end = KeyFrames[1];
+    for (int i = 0; i < KeyFrames.size(); i++)
+    {
+        if (KeyFrames[i].time / 60.0f > playtime)
+        {
+            keyframe = i;
+            break;
+        }
+        else
+        {
+            if (i + 1 == KeyFrames.size())
+            {
+                end = KeyFrames[i];
+            }
+            else
+            {
+                end = KeyFrames[i + 1];
+            }
+
+
+            start = KeyFrames[i];
+        }
+    }
+    if (KeyFrames[KeyFrames.size() - 1].time / 60.0f < playtime)
+    {
+        playing = false;
+        playtime = 0;
+
+        pos = start.pos;
+        auto main = *(sMvc3Main**)_addr(0x140E177e8);
+        auto cam = (uMvcCamera**)(((char*)main->mpCamera) + (0x58));
+        (*cam)->mFov = start.fov;
+        rotation = start.rot.x;
+        rotationUp = start.rot.y;
+        
+    }
+    keyframe = 0;
+    lerpval = 1.0f - (playtime - start.time / 60.0f) / (end.time / 60.0f - start.time / 60.0f);
+}
+
+void TickDolly()
+{
+    DollyKeyframe start, end;
+    float lerpval;
+    int keyframe;
+    PlayingInformation(start, end, lerpval, keyframe);
+    pos.x = lerp(start.pos.x, end.pos.x, lerpval);
+    pos.y = lerp(start.pos.y, end.pos.y, lerpval);
+    pos.z = lerp(start.pos.z, end.pos.z, lerpval);
+    rotation = lerp(start.rot.x, end.rot.x, lerpval);
+    rotationUp = lerp(start.rot.y, end.rot.y, lerpval);
+    auto fov = lerp(start.fov, end.fov, lerpval);
+    auto main = *(sMvc3Main**)_addr(0x140E177e8);
+    auto cam = (uMvcCamera**)(((char*)main->mpCamera) + (0x58));
+    (*cam)->mFov = fov;
+}
+
 void NoClip::Tick(Bindings* bindings)
 {
+    if (playing)
+    {
+        TickDolly();
+    }
+    
     float speed = 5.0f;
     if (GetAsyncKeyState(VK_SHIFT))
     {
         speed = 20.0f;
     }
-
 
     if (KeyPressed(bindings->left))
     {
@@ -156,11 +226,8 @@ void NoClip::TickMenu()
         uintptr_t P1RecordingData = *(uintptr_t*)(block3 + 0x90);
         int P1CurrentPlaybackFrame = *(int*)(P1RecordingData + 0x40);
         ImGui::Text("Current Playback Frame: %d\n", P1CurrentPlaybackFrame);
-        static int currenttime = 0.0f;
-        static float playtime = 0.0f;
-        static float startime = 0.0f;
 
-        static bool playing = false;
+
         ImGui::SliderInt("time", &currenttime, 0, 600);
         ImGui::Text("Frame Time : %f", currenttime / 60.0f);
         if (KeyFrames.size() > 1 && ImGui::Button("PlayDolly"))
@@ -215,11 +282,11 @@ void NoClip::TickMenu()
 
         if (playing)
         {
-            auto tm = std::chrono::high_resolution_clock::now();
-            auto now = std::chrono::duration_cast<std::chrono::duration<double>>(tm.time_since_epoch()).count();
-            playtime = now - startime;
-            auto start = KeyFrames[0];
-            auto end = KeyFrames[1];
+            DollyKeyframe start, end;
+            float lerpval = 0;
+            int keyframe = 0;
+            PlayingInformation(start, end, lerpval, keyframe);
+            ImGui::Text("PlayIndex: %d - %f", keyframe - 1, KeyFrames[keyframe].time / 60.0f);
             ImGui::Text("PlayTime: %f", playtime);
             if (KeyFrames[KeyFrames.size() - 1].time / 60.0f < playtime)
             {
@@ -228,38 +295,8 @@ void NoClip::TickMenu()
             }
             else
             {
-                for (int i = 0; i < KeyFrames.size(); i++)
-                {
-                    if (KeyFrames[i].time / 60.0f > playtime)
-                    {
-                        ImGui::Text("PlayIndex: %d - %f", i - 1, KeyFrames[i].time / 60.0f);
-                        break;
-                    }
-                    else
-                    {
-                        if (i + 1 == KeyFrames.size())
-                        {
-                            end = KeyFrames[i];
-                        }
-                        else
-                        {
-                            end = KeyFrames[i + 1];
-                        }
-
-
-                        start = KeyFrames[i];
-                    }
-                }
                 auto lerpval = 1.0f - (playtime - start.time / 60.0f) / (end.time / 60.0f - start.time / 60.0f);
                 ImGui::Text("LerpVal: %f", lerpval);
-                //auto t  =;
-                pos.x = lerp(start.pos.x, end.pos.x, lerpval);
-                pos.y = lerp(start.pos.y, end.pos.y, lerpval);
-                pos.z = lerp(start.pos.z, end.pos.z, lerpval);
-                rotation = lerp(start.rot.x, end.rot.x, lerpval);
-                rotationUp = lerp(start.rot.y, end.rot.y, lerpval);
-                auto fov = lerp(start.fov, end.fov, lerpval);
-                (*cam)->mFov = fov;
             }
         }
     }
